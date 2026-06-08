@@ -1430,6 +1430,7 @@
 
   <script>
     const BIRTHDAY_TARGET = new Date("2026-06-11T00:00:00+07:00").getTime();
+    const WISHES_API_URL = "https://script.google.com/macros/s/AKfycbwSAD-3Aq1biK4uUKepEIHVTMdeuQq1h8dLCZMzWNGQG2yj3VesVYs5i8xO9GedYzSK/exec";
 
     const defaultWishes = [
       {
@@ -1577,9 +1578,44 @@
       });
     });
 
+    let onlineWishes = [];
+
     function getWishes() {
-      const stored = JSON.parse(localStorage.getItem("socWishes") || "[]");
-      return [...defaultWishes, ...stored];
+      return [...defaultWishes, ...onlineWishes];
+    }
+
+    function normalizeWish(wish) {
+      return {
+        sender: wish.sender || wish["Tên người gửi"] || "",
+        relation: wish.relation || wish["Mối quan hệ"] || "",
+        message: wish.message || wish["Lời chúc"] || "",
+        icon: wish.icon || wish["Icon"] || "💌",
+        createdAt: wish.createdAt || wish["Thời gian"] || ""
+      };
+    }
+
+    async function loadOnlineWishes() {
+      if (!WISHES_API_URL) return;
+
+      try {
+        const response = await fetch(`${WISHES_API_URL}?t=${Date.now()}`, {
+          method: "GET",
+          cache: "no-store"
+        });
+
+        if (!response.ok) {
+          throw new Error("Không đọc được dữ liệu lời chúc");
+        }
+
+        const data = await response.json();
+        onlineWishes = Array.isArray(data)
+          ? data.map(normalizeWish).filter(wish => wish.sender && wish.message)
+          : [];
+
+        renderWishes();
+      } catch (error) {
+        console.warn("Không tải được lời chúc từ Google Sheet:", error);
+      }
     }
 
     function renderWishes() {
@@ -1640,7 +1676,7 @@
       }
     });
 
-    $("#wishForm").addEventListener("submit", (event) => {
+    $("#wishForm").addEventListener("submit", async (event) => {
       event.preventDefault();
 
       const sender = $("#sender").value.trim();
@@ -1652,20 +1688,45 @@
         return;
       }
 
-      const stored = JSON.parse(localStorage.getItem("socWishes") || "[]");
-      stored.push({ sender, relation, message, icon: "💌" });
-      localStorage.setItem("socWishes", JSON.stringify(stored));
+      const submitBtn = $("#wishForm button[type='submit']");
+      const oldBtnText = submitBtn.textContent;
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Đang gửi lời chúc... 💌";
 
-      $("#wishForm").reset();
-      $("#wishForm").classList.remove("show");
-      renderWishes();
-      showToast("Lời chúc của bạn đã lên chuyến xe yêu thương gửi đến Sóc rồi! 🚗💌");
-      launchConfetti();
+      const newWish = { sender, relation, message, icon: "💌" };
 
-      setTimeout(() => {
-        const slider = $("#wishSlider");
-        slider.scrollTo({ left: slider.scrollWidth, behavior: "smooth" });
-      }, 120);
+      try {
+        const payload = new URLSearchParams(newWish);
+        const response = await fetch(WISHES_API_URL, {
+          method: "POST",
+          body: payload
+        });
+
+        if (!response.ok) {
+          throw new Error("Không lưu được lời chúc");
+        }
+
+        onlineWishes.push(newWish);
+
+        $("#wishForm").reset();
+        $("#wishForm").classList.remove("show");
+        renderWishes();
+        showToast("Lời chúc của bạn đã được lưu lại rồi! 🚗💌");
+        launchConfetti();
+
+        setTimeout(() => {
+          const slider = $("#wishSlider");
+          slider.scrollTo({ left: slider.scrollWidth, behavior: "smooth" });
+        }, 120);
+
+        loadOnlineWishes();
+      } catch (error) {
+        console.error("Lỗi khi gửi lời chúc:", error);
+        showToast("Chưa lưu được lời chúc, bạn thử gửi lại giúp mình nhé 💌");
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = oldBtnText;
+      }
     });
 
     function escapeHTML(str) {
@@ -1781,6 +1842,7 @@
     }, 560);
 
     renderWishes();
+    loadOnlineWishes();
 
     window.addEventListener("load", () => {
       setTimeout(() => {
