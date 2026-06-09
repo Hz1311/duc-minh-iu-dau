@@ -860,6 +860,28 @@
       animation: fadeUp 0.28s ease both;
     }
 
+    /* Giữ khu vực nhập lời chúc đúng vị trí khi bàn phím mobile đóng/mở. */
+    .wish-form,
+    .wish-slider-wrap,
+    #toggleWishForm {
+      scroll-margin-top: max(88px, calc(env(safe-area-inset-top) + 68px));
+      scroll-margin-bottom: calc(28px + env(safe-area-inset-bottom));
+    }
+
+    .wish-form input,
+    .wish-form select,
+    .wish-form textarea,
+    .wish-form button[type="submit"] {
+      scroll-margin-top: max(88px, calc(env(safe-area-inset-top) + 68px));
+      scroll-margin-bottom: calc(180px + env(safe-area-inset-bottom));
+    }
+
+    @supports (min-height: 100dvh) {
+      .mobile-frame {
+        min-height: 100dvh;
+      }
+    }
+
     .field {
       margin-bottom: 12px;
       text-align: left;
@@ -1863,7 +1885,6 @@
   <script>
     const BIRTHDAY_TARGET = new Date("2026-06-11T00:00:00+07:00").getTime();
     const WISHES_API_URL = "https://script.google.com/macros/s/AKfycbwSAD-3Aq1biK4uUKepEIHVTMdeuQq1h8dLCZMzWNGQG2yj3VesVYs5i8xO9GedYzSK/exec";
-    const LOCAL_WISHES_STORAGE_KEY = "soc-local-wishes-v1";
 
     const defaultWishes = [
       {
@@ -2328,63 +2349,8 @@
 
     let onlineWishes = [];
 
-    function getWishStorageIdentity(wish) {
-      return [
-        String(wish.sender || "").trim().toLocaleLowerCase("vi"),
-        String(wish.relation || "").trim().toLocaleLowerCase("vi"),
-        String(wish.message || "")
-          .replace(/\r\n?/g, "\n")
-          .replace(/\s+/g, " ")
-          .trim()
-          .toLocaleLowerCase("vi")
-      ].join("|");
-    }
-
-    function deduplicateWishes(items) {
-      const seen = new Set();
-
-      return items.filter((wish) => {
-        const identity = getWishStorageIdentity(wish);
-        if (!identity || seen.has(identity)) return false;
-        seen.add(identity);
-        return true;
-      });
-    }
-
-    function loadLocalWishes() {
-      try {
-        const saved = localStorage.getItem(LOCAL_WISHES_STORAGE_KEY);
-        if (!saved) return [];
-
-        const data = JSON.parse(saved);
-        return Array.isArray(data)
-          ? data.map(normalizeWish).filter(wish => wish.sender && wish.message)
-          : [];
-      } catch (error) {
-        console.warn("Không đọc được lời chúc đã lưu trên thiết bị:", error);
-        return [];
-      }
-    }
-
-    function saveLocalWishes() {
-      try {
-        localStorage.setItem(
-          LOCAL_WISHES_STORAGE_KEY,
-          JSON.stringify(localWishes.slice(-100))
-        );
-      } catch (error) {
-        console.warn("Không lưu được lời chúc trên thiết bị:", error);
-      }
-    }
-
-    let localWishes = loadLocalWishes();
-
     function getWishes() {
-      return deduplicateWishes([
-        ...defaultWishes,
-        ...onlineWishes,
-        ...localWishes
-      ]);
+      return [...defaultWishes, ...onlineWishes];
     }
 
     function normalizeWish(wish) {
@@ -2487,14 +2453,88 @@
       slider.scrollTo({ left: next, behavior: getScrollBehavior() });
     }, 5200);
 
-    $("#toggleWishForm").addEventListener("click", () => {
-      $("#wishForm").classList.toggle("show");
-      if ($("#wishForm").classList.contains("show")) {
-        $("#sender").focus();
+    const wishFormElement = $("#wishForm");
+    const wishToggleButton = $("#toggleWishForm");
+    const wishSliderElement = $("#wishSlider");
+
+    function releaseWishFormFocus() {
+      const activeElement = document.activeElement;
+      if (
+        activeElement
+        && wishFormElement.contains(activeElement)
+        && typeof activeElement.blur === "function"
+      ) {
+        activeElement.blur();
+      }
+    }
+
+    function runAfterMobileKeyboardSettles(callback) {
+      const viewport = window.visualViewport;
+      let completed = false;
+      let settleTimer = null;
+      let fallbackTimer = null;
+
+      const cleanup = () => {
+        if (settleTimer) window.clearTimeout(settleTimer);
+        if (fallbackTimer) window.clearTimeout(fallbackTimer);
+        if (viewport) {
+          viewport.removeEventListener("resize", handleViewportChange);
+          viewport.removeEventListener("scroll", handleViewportChange);
+        }
+      };
+
+      const finish = () => {
+        if (completed) return;
+        completed = true;
+        cleanup();
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(callback);
+        });
+      };
+
+      const handleViewportChange = () => {
+        if (settleTimer) window.clearTimeout(settleTimer);
+        settleTimer = window.setTimeout(finish, 140);
+      };
+
+      if (!viewport) {
+        fallbackTimer = window.setTimeout(finish, 280);
+        return;
+      }
+
+      viewport.addEventListener("resize", handleViewportChange, { passive: true });
+      viewport.addEventListener("scroll", handleViewportChange, { passive: true });
+      fallbackTimer = window.setTimeout(finish, 650);
+    }
+
+    function scrollWishAreaIntoView(target, block = "start") {
+      if (!target) return;
+      target.scrollIntoView({
+        behavior: getScrollBehavior(),
+        block,
+        inline: "nearest"
+      });
+    }
+
+    wishToggleButton.addEventListener("click", () => {
+      wishFormElement.classList.toggle("show");
+      if (wishFormElement.classList.contains("show")) {
+        window.requestAnimationFrame(() => {
+          const senderInput = $("#sender");
+          senderInput.focus();
+          window.setTimeout(() => {
+            scrollWishAreaIntoView(senderInput, "center");
+          }, 180);
+        });
+      } else {
+        releaseWishFormFocus();
+        runAfterMobileKeyboardSettles(() => {
+          scrollWishAreaIntoView(wishToggleButton, "center");
+        });
       }
     });
 
-    $("#wishForm").addEventListener("submit", async (event) => {
+    wishFormElement.addEventListener("submit", async (event) => {
       event.preventDefault();
 
       const sender = $("#sender").value.trim();
@@ -2508,7 +2548,15 @@
         return;
       }
 
-      const submitBtn = $("#wishForm button[type='submit']");
+      /* Đóng bàn phím ngay khi gửi và phục hồi vị trí cuộn sau khi viewport ổn định. */
+      releaseWishFormFocus();
+      runAfterMobileKeyboardSettles(() => {
+        if (wishFormElement.classList.contains("show")) {
+          scrollWishAreaIntoView(wishFormElement, "start");
+        }
+      });
+
+      const submitBtn = wishFormElement.querySelector("button[type='submit']");
       const oldBtnText = submitBtn.textContent;
       submitBtn.disabled = true;
       submitBtn.textContent = "Đang gửi lời chúc... 💌";
@@ -2519,47 +2567,44 @@
       const newWish = { sender, relation, message, createdAt: new Date().toISOString() };
       newWish.icon = selectWishIcon(newWish, previousIcon);
 
-      // Lưu và hiển thị ngay trên thiết bị, không phụ thuộc tốc độ hay trạng thái API.
-      const newWishIdentity = getWishStorageIdentity(newWish);
-      const alreadySaved = localWishes.some(
-        wish => getWishStorageIdentity(wish) === newWishIdentity
-      );
-
-      if (!alreadySaved) {
-        localWishes.push(newWish);
-        saveLocalWishes();
-      }
-
-      $("#wishForm").reset();
-      $("#wishForm").classList.remove("show");
-      renderWishes();
-      showToast("Lời chúc của bạn đã được lưu và hiển thị rồi! 🚗💌");
-      launchConfetti();
-
-      setTimeout(() => {
-        const slider = $("#wishSlider");
-        slider.scrollTo({ left: slider.scrollWidth, behavior: getScrollBehavior() });
-      }, 120);
-
       try {
-        if (WISHES_API_URL) {
-          const payload = new URLSearchParams(newWish);
-          const response = await fetch(WISHES_API_URL, {
-            method: "POST",
-            body: payload
-          });
+        const payload = new URLSearchParams(newWish);
+        const response = await fetch(WISHES_API_URL, {
+          method: "POST",
+          body: payload
+        });
 
-          if (!response.ok) {
-            throw new Error("Không đồng bộ được lời chúc");
-          }
-
-          onlineWishes.push(newWish);
-          renderWishes();
-          loadOnlineWishes();
+        if (!response.ok) {
+          throw new Error("Không lưu được lời chúc");
         }
+
+        onlineWishes.push(newWish);
+
+        wishFormElement.reset();
+        wishFormElement.classList.remove("show");
+        renderWishes();
+        showToast("Lời chúc của bạn đã được lưu lại rồi! 🚗💌");
+        launchConfetti();
+
+        runAfterMobileKeyboardSettles(() => {
+          const sliderWrap = wishSliderElement.closest(".wish-slider-wrap") || wishSliderElement;
+          scrollWishAreaIntoView(sliderWrap, "center");
+
+          window.setTimeout(() => {
+            wishSliderElement.scrollTo({
+              left: wishSliderElement.scrollWidth,
+              behavior: getScrollBehavior()
+            });
+          }, 100);
+        });
+
+        loadOnlineWishes();
       } catch (error) {
-        // Lời chúc vẫn được giữ trong localStorage và tiếp tục hiển thị bình thường.
-        console.warn("Chưa đồng bộ được lời chúc lên máy chủ:", error);
+        console.error("Lỗi khi gửi lời chúc:", error);
+        showToast("Chưa lưu được lời chúc, bạn thử gửi lại giúp mình nhé 💌");
+        runAfterMobileKeyboardSettles(() => {
+          scrollWishAreaIntoView(wishFormElement, "start");
+        });
       } finally {
         submitBtn.disabled = false;
         submitBtn.textContent = oldBtnText;
