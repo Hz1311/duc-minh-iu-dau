@@ -1643,9 +1643,81 @@
     }
 
   </style>
+
+
+  <!-- MUSIC-CONTROLS-START -->
+  <style>
+    /* Nút nhạc nền độc lập, không tham gia luồng bố cục của trang */
+    .music-toggle {
+      position: fixed;
+      right: max(14px, calc((100vw - 430px) / 2 + 14px));
+      bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+      z-index: 115;
+      width: 48px;
+      height: 48px;
+      min-width: 44px;
+      min-height: 44px;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      border-radius: 50%;
+      background: rgba(255, 252, 245, 0.94);
+      color: var(--brown, #5B4636);
+      box-shadow: 0 10px 24px rgba(91, 70, 54, 0.18);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      font-size: 22px;
+      line-height: 1;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+    }
+
+    .music-toggle:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 13px 28px rgba(91, 70, 54, 0.22);
+    }
+
+    .music-toggle:active {
+      transform: scale(0.96);
+    }
+
+    .music-toggle:focus-visible {
+      outline: 3px solid rgba(75, 158, 219, 0.42);
+      outline-offset: 3px;
+    }
+
+    .music-toggle[hidden] {
+      display: none !important;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .music-toggle {
+        transition: none;
+      }
+    }
+  </style>
+
 </head>
 
 <body>
+
+  <audio id="backgroundMusic" loop preload="auto" playsinline>
+    <source src="nhac.mp3" type="audio/mpeg">
+  </audio>
+
+  <button
+    id="musicToggle"
+    class="music-toggle"
+    type="button"
+    aria-label="Bật nhạc nền"
+    aria-pressed="false"
+    title="Bật nhạc nền"
+  >🔇</button>
+
   <div class="floating-clouds" aria-hidden="true">
     <span class="cloud one"></span>
     <span class="cloud two"></span>
@@ -2735,5 +2807,105 @@
       }, 700);
     });
   </script>
+
+
+  <script>
+    (() => {
+      "use strict";
+
+      const music = document.getElementById("backgroundMusic");
+      const musicButton = document.getElementById("musicToggle");
+      const firstInteractionEvents = ["click", "touchstart", "keydown"];
+      let listenersRegistered = false;
+      let musicUnavailable = false;
+      let userPausedMusic = false;
+
+      if (!music || !musicButton) return;
+
+      music.volume = 0.5;
+
+      function updateMusicButton() {
+        const isPlaying = !music.paused && !music.ended && !musicUnavailable;
+        musicButton.textContent = isPlaying ? "🔊" : "🔇";
+        musicButton.setAttribute("aria-pressed", String(isPlaying));
+        musicButton.setAttribute("aria-label", isPlaying ? "Tắt nhạc nền" : "Bật nhạc nền");
+        musicButton.title = isPlaying ? "Tắt nhạc nền" : "Bật nhạc nền";
+      }
+
+      function removeFirstInteractionListeners() {
+        if (!listenersRegistered) return;
+        firstInteractionEvents.forEach((eventName) => {
+          document.removeEventListener(eventName, handleFirstInteraction);
+        });
+        listenersRegistered = false;
+      }
+
+      async function startMusic() {
+        if (musicUnavailable || userPausedMusic || !music.paused) {
+          updateMusicButton();
+          return;
+        }
+
+        try {
+          await music.play();
+          updateMusicButton();
+          removeFirstInteractionListeners();
+        } catch (_) {
+          // Trình duyệt có thể chặn autoplay có âm thanh.
+          // Trang tiếp tục hoạt động và nhạc sẽ được thử lại ở tương tác đầu tiên.
+          updateMusicButton();
+        }
+      }
+
+      function handleFirstInteraction(event) {
+        if (event.type === "keydown" && event.repeat) return;
+
+        // Bảo đảm chỉ xử lý đúng một lần tương tác đầu tiên.
+        removeFirstInteractionListeners();
+        startMusic();
+      }
+
+      function registerFirstInteractionListeners() {
+        if (listenersRegistered || musicUnavailable) return;
+        firstInteractionEvents.forEach((eventName) => {
+          document.addEventListener(eventName, handleFirstInteraction, { passive: eventName !== "keydown" });
+        });
+        listenersRegistered = true;
+      }
+
+      function handleMusicUnavailable() {
+        musicUnavailable = true;
+        removeFirstInteractionListeners();
+        musicButton.hidden = true;
+      }
+
+      musicButton.addEventListener("click", async (event) => {
+        event.stopPropagation();
+
+        if (musicUnavailable) return;
+
+        if (music.paused) {
+          userPausedMusic = false;
+          await startMusic();
+        } else {
+          userPausedMusic = true;
+          music.pause();
+          updateMusicButton();
+        }
+      });
+
+      music.addEventListener("play", updateMusicButton);
+      music.addEventListener("pause", updateMusicButton);
+      music.addEventListener("ended", updateMusicButton);
+      music.addEventListener("error", handleMusicUnavailable, { once: true });
+
+      registerFirstInteractionListeners();
+      updateMusicButton();
+
+      window.addEventListener("DOMContentLoaded", startMusic, { once: true });
+    })();
+  </script>
+  <!-- MUSIC-CONTROLS-END -->
+
 </body>
 </html>
