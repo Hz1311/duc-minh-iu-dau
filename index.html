@@ -1664,10 +1664,70 @@
       }
     }
 
+
+    /* Nhạc nền: nút nổi không làm thay đổi bố cục hiện tại */
+    .music-toggle {
+      position: fixed;
+      right: max(14px, calc((100vw - 430px) / 2 + 14px));
+      bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+      z-index: 110;
+      width: 48px;
+      height: 48px;
+      min-width: 44px;
+      min-height: 44px;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      border-radius: 50%;
+      background: rgba(255, 252, 245, 0.94);
+      color: var(--brown);
+      box-shadow: 0 10px 24px rgba(91, 70, 54, 0.18);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      font-size: 22px;
+      line-height: 1;
+      touch-action: manipulation;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+    }
+
+    .music-toggle:active {
+      transform: scale(0.94);
+      box-shadow: 0 5px 14px rgba(91, 70, 54, 0.14);
+    }
+
+    .music-toggle:focus-visible {
+      outline: 3px solid rgba(75, 158, 219, 0.36);
+      outline-offset: 3px;
+    }
+
+    .music-toggle[hidden] {
+      display: none !important;
+    }
+
+    @media (max-width: 480px) {
+      .music-toggle {
+        right: 14px;
+      }
+    }
+
   </style>
 </head>
 
 <body>
+
+  <audio id="backgroundMusic" loop preload="auto" playsinline hidden>
+    <source src="nhac.mp3" type="audio/mpeg" />
+  </audio>
+  <button
+    class="music-toggle"
+    id="musicToggle"
+    type="button"
+    aria-label="Tắt nhạc nền"
+    aria-pressed="true"
+    title="Tắt nhạc nền"
+  >🔊</button>
+
   <div class="floating-clouds" aria-hidden="true">
     <span class="cloud one"></span>
     <span class="cloud two"></span>
@@ -2849,5 +2909,123 @@
       }, 700);
     });
   </script>
+
+  <script>
+    (() => {
+      const music = document.getElementById("backgroundMusic");
+      const musicToggle = document.getElementById("musicToggle");
+
+      if (!music || !musicToggle) return;
+
+      music.volume = 0.5;
+      let userPaused = false;
+      let sourceFailed = false;
+      let firstInteractionEvents = [];
+
+      function updateMusicButton() {
+        const isPlaying = !music.paused && !music.ended;
+        musicToggle.textContent = isPlaying ? "🔊" : "🔇";
+        musicToggle.setAttribute("aria-pressed", String(isPlaying));
+        musicToggle.setAttribute("aria-label", isPlaying ? "Tắt nhạc nền" : "Bật nhạc nền");
+        musicToggle.title = isPlaying ? "Tắt nhạc nền" : "Bật nhạc nền";
+      }
+
+      function removeFirstInteractionListeners() {
+        firstInteractionEvents.forEach(([eventName, options]) => {
+          document.removeEventListener(eventName, handleFirstInteraction, options);
+        });
+        firstInteractionEvents = [];
+      }
+
+      async function startMusic() {
+        if (sourceFailed || userPaused) return false;
+
+        try {
+          await music.play();
+          updateMusicButton();
+          removeFirstInteractionListeners();
+          return true;
+        } catch (error) {
+          // Trình duyệt có thể chặn autoplay có âm thanh.
+          updateMusicButton();
+          return false;
+        }
+      }
+
+      function handleFirstInteraction(event) {
+        removeFirstInteractionListeners();
+
+        // Nút nhạc tự xử lý phát/tắt ở sự kiện click của chính nó.
+        if (event.target instanceof Element && event.target.closest("#musicToggle")) return;
+        startMusic();
+      }
+
+      function registerFirstInteractionListeners() {
+        const eventNames = window.PointerEvent
+          ? ["pointerdown", "keydown"]
+          : ["touchstart", "click", "keydown"];
+
+        eventNames.forEach((eventName) => {
+          const options = eventName === "keydown"
+            ? { capture: true }
+            : { capture: true, passive: true };
+          firstInteractionEvents.push([eventName, options]);
+          document.addEventListener(eventName, handleFirstInteraction, options);
+        });
+      }
+
+      musicToggle.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        removeFirstInteractionListeners();
+
+        if (!music.paused && !music.ended) {
+          userPaused = true;
+          music.pause();
+          updateMusicButton();
+          return;
+        }
+
+        userPaused = false;
+        try {
+          await music.play();
+        } catch (error) {
+          // Không hiển thị lỗi kỹ thuật cho người dùng.
+        }
+        updateMusicButton();
+      });
+
+      music.addEventListener("play", updateMusicButton);
+      music.addEventListener("pause", updateMusicButton);
+      music.addEventListener("ended", updateMusicButton);
+      music.addEventListener("error", () => {
+        sourceFailed = true;
+        removeFirstInteractionListeners();
+        musicToggle.hidden = true;
+      });
+
+      function stopMusicWhenLeaving() {
+        try {
+          music.pause();
+          music.currentTime = 0;
+        } catch (error) {
+          // Trang vẫn đóng bình thường nếu trình duyệt không cho cập nhật media.
+        }
+      }
+
+      window.addEventListener("pagehide", stopMusicWhenLeaving);
+      window.addEventListener("beforeunload", stopMusicWhenLeaving);
+
+      registerFirstInteractionListeners();
+      updateMusicButton();
+
+      if (document.readyState === "loading") {
+        window.addEventListener("DOMContentLoaded", startMusic, { once: true });
+      } else {
+        startMusic();
+      }
+    })();
+  </script>
+
 </body>
 </html>
