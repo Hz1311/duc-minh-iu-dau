@@ -1643,81 +1643,9 @@
     }
 
   </style>
-
-
-  <!-- MUSIC-CONTROLS-START -->
-  <style>
-    /* Nút nhạc nền độc lập, không tham gia luồng bố cục của trang */
-    .music-toggle {
-      position: fixed;
-      right: max(14px, calc((100vw - 430px) / 2 + 14px));
-      bottom: calc(14px + env(safe-area-inset-bottom, 0px));
-      z-index: 115;
-      width: 48px;
-      height: 48px;
-      min-width: 44px;
-      min-height: 44px;
-      display: grid;
-      place-items: center;
-      padding: 0;
-      border: 1px solid rgba(255, 255, 255, 0.9);
-      border-radius: 50%;
-      background: rgba(255, 252, 245, 0.94);
-      color: var(--brown, #5B4636);
-      box-shadow: 0 10px 24px rgba(91, 70, 54, 0.18);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      font-size: 22px;
-      line-height: 1;
-      cursor: pointer;
-      user-select: none;
-      -webkit-user-select: none;
-      touch-action: manipulation;
-      transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
-    }
-
-    .music-toggle:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 13px 28px rgba(91, 70, 54, 0.22);
-    }
-
-    .music-toggle:active {
-      transform: scale(0.96);
-    }
-
-    .music-toggle:focus-visible {
-      outline: 3px solid rgba(75, 158, 219, 0.42);
-      outline-offset: 3px;
-    }
-
-    .music-toggle[hidden] {
-      display: none !important;
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      .music-toggle {
-        transition: none;
-      }
-    }
-  </style>
-
 </head>
 
 <body>
-
-  <audio id="backgroundMusic" loop preload="auto" playsinline>
-    <source src="nhac.mp3" type="audio/mpeg">
-  </audio>
-
-  <button
-    id="musicToggle"
-    class="music-toggle"
-    type="button"
-    aria-label="Bật nhạc nền"
-    aria-pressed="false"
-    title="Bật nhạc nền"
-  >🔇</button>
-
   <div class="floating-clouds" aria-hidden="true">
     <span class="cloud one"></span>
     <span class="cloud two"></span>
@@ -1935,6 +1863,7 @@
   <script>
     const BIRTHDAY_TARGET = new Date("2026-06-11T00:00:00+07:00").getTime();
     const WISHES_API_URL = "https://script.google.com/macros/s/AKfycbwSAD-3Aq1biK4uUKepEIHVTMdeuQq1h8dLCZMzWNGQG2yj3VesVYs5i8xO9GedYzSK/exec";
+    const LOCAL_WISHES_STORAGE_KEY = "soc-local-wishes-v1";
 
     const defaultWishes = [
       {
@@ -2399,8 +2328,63 @@
 
     let onlineWishes = [];
 
+    function getWishStorageIdentity(wish) {
+      return [
+        String(wish.sender || "").trim().toLocaleLowerCase("vi"),
+        String(wish.relation || "").trim().toLocaleLowerCase("vi"),
+        String(wish.message || "")
+          .replace(/\r\n?/g, "\n")
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLocaleLowerCase("vi")
+      ].join("|");
+    }
+
+    function deduplicateWishes(items) {
+      const seen = new Set();
+
+      return items.filter((wish) => {
+        const identity = getWishStorageIdentity(wish);
+        if (!identity || seen.has(identity)) return false;
+        seen.add(identity);
+        return true;
+      });
+    }
+
+    function loadLocalWishes() {
+      try {
+        const saved = localStorage.getItem(LOCAL_WISHES_STORAGE_KEY);
+        if (!saved) return [];
+
+        const data = JSON.parse(saved);
+        return Array.isArray(data)
+          ? data.map(normalizeWish).filter(wish => wish.sender && wish.message)
+          : [];
+      } catch (error) {
+        console.warn("Không đọc được lời chúc đã lưu trên thiết bị:", error);
+        return [];
+      }
+    }
+
+    function saveLocalWishes() {
+      try {
+        localStorage.setItem(
+          LOCAL_WISHES_STORAGE_KEY,
+          JSON.stringify(localWishes.slice(-100))
+        );
+      } catch (error) {
+        console.warn("Không lưu được lời chúc trên thiết bị:", error);
+      }
+    }
+
+    let localWishes = loadLocalWishes();
+
     function getWishes() {
-      return [...defaultWishes, ...onlineWishes];
+      return deduplicateWishes([
+        ...defaultWishes,
+        ...onlineWishes,
+        ...localWishes
+      ]);
     }
 
     function normalizeWish(wish) {
@@ -2535,34 +2519,47 @@
       const newWish = { sender, relation, message, createdAt: new Date().toISOString() };
       newWish.icon = selectWishIcon(newWish, previousIcon);
 
+      // Lưu và hiển thị ngay trên thiết bị, không phụ thuộc tốc độ hay trạng thái API.
+      const newWishIdentity = getWishStorageIdentity(newWish);
+      const alreadySaved = localWishes.some(
+        wish => getWishStorageIdentity(wish) === newWishIdentity
+      );
+
+      if (!alreadySaved) {
+        localWishes.push(newWish);
+        saveLocalWishes();
+      }
+
+      $("#wishForm").reset();
+      $("#wishForm").classList.remove("show");
+      renderWishes();
+      showToast("Lời chúc của bạn đã được lưu và hiển thị rồi! 🚗💌");
+      launchConfetti();
+
+      setTimeout(() => {
+        const slider = $("#wishSlider");
+        slider.scrollTo({ left: slider.scrollWidth, behavior: getScrollBehavior() });
+      }, 120);
+
       try {
-        const payload = new URLSearchParams(newWish);
-        const response = await fetch(WISHES_API_URL, {
-          method: "POST",
-          body: payload
-        });
+        if (WISHES_API_URL) {
+          const payload = new URLSearchParams(newWish);
+          const response = await fetch(WISHES_API_URL, {
+            method: "POST",
+            body: payload
+          });
 
-        if (!response.ok) {
-          throw new Error("Không lưu được lời chúc");
+          if (!response.ok) {
+            throw new Error("Không đồng bộ được lời chúc");
+          }
+
+          onlineWishes.push(newWish);
+          renderWishes();
+          loadOnlineWishes();
         }
-
-        onlineWishes.push(newWish);
-
-        $("#wishForm").reset();
-        $("#wishForm").classList.remove("show");
-        renderWishes();
-        showToast("Lời chúc của bạn đã được lưu lại rồi! 🚗💌");
-        launchConfetti();
-
-        setTimeout(() => {
-          const slider = $("#wishSlider");
-          slider.scrollTo({ left: slider.scrollWidth, behavior: getScrollBehavior() });
-        }, 120);
-
-        loadOnlineWishes();
       } catch (error) {
-        console.error("Lỗi khi gửi lời chúc:", error);
-        showToast("Chưa lưu được lời chúc, bạn thử gửi lại giúp mình nhé 💌");
+        // Lời chúc vẫn được giữ trong localStorage và tiếp tục hiển thị bình thường.
+        console.warn("Chưa đồng bộ được lời chúc lên máy chủ:", error);
       } finally {
         submitBtn.disabled = false;
         submitBtn.textContent = oldBtnText;
@@ -2807,105 +2804,5 @@
       }, 700);
     });
   </script>
-
-
-  <script>
-    (() => {
-      "use strict";
-
-      const music = document.getElementById("backgroundMusic");
-      const musicButton = document.getElementById("musicToggle");
-      const firstInteractionEvents = ["click", "touchstart", "keydown"];
-      let listenersRegistered = false;
-      let musicUnavailable = false;
-      let userPausedMusic = false;
-
-      if (!music || !musicButton) return;
-
-      music.volume = 0.5;
-
-      function updateMusicButton() {
-        const isPlaying = !music.paused && !music.ended && !musicUnavailable;
-        musicButton.textContent = isPlaying ? "🔊" : "🔇";
-        musicButton.setAttribute("aria-pressed", String(isPlaying));
-        musicButton.setAttribute("aria-label", isPlaying ? "Tắt nhạc nền" : "Bật nhạc nền");
-        musicButton.title = isPlaying ? "Tắt nhạc nền" : "Bật nhạc nền";
-      }
-
-      function removeFirstInteractionListeners() {
-        if (!listenersRegistered) return;
-        firstInteractionEvents.forEach((eventName) => {
-          document.removeEventListener(eventName, handleFirstInteraction);
-        });
-        listenersRegistered = false;
-      }
-
-      async function startMusic() {
-        if (musicUnavailable || userPausedMusic || !music.paused) {
-          updateMusicButton();
-          return;
-        }
-
-        try {
-          await music.play();
-          updateMusicButton();
-          removeFirstInteractionListeners();
-        } catch (_) {
-          // Trình duyệt có thể chặn autoplay có âm thanh.
-          // Trang tiếp tục hoạt động và nhạc sẽ được thử lại ở tương tác đầu tiên.
-          updateMusicButton();
-        }
-      }
-
-      function handleFirstInteraction(event) {
-        if (event.type === "keydown" && event.repeat) return;
-
-        // Bảo đảm chỉ xử lý đúng một lần tương tác đầu tiên.
-        removeFirstInteractionListeners();
-        startMusic();
-      }
-
-      function registerFirstInteractionListeners() {
-        if (listenersRegistered || musicUnavailable) return;
-        firstInteractionEvents.forEach((eventName) => {
-          document.addEventListener(eventName, handleFirstInteraction, { passive: eventName !== "keydown" });
-        });
-        listenersRegistered = true;
-      }
-
-      function handleMusicUnavailable() {
-        musicUnavailable = true;
-        removeFirstInteractionListeners();
-        musicButton.hidden = true;
-      }
-
-      musicButton.addEventListener("click", async (event) => {
-        event.stopPropagation();
-
-        if (musicUnavailable) return;
-
-        if (music.paused) {
-          userPausedMusic = false;
-          await startMusic();
-        } else {
-          userPausedMusic = true;
-          music.pause();
-          updateMusicButton();
-        }
-      });
-
-      music.addEventListener("play", updateMusicButton);
-      music.addEventListener("pause", updateMusicButton);
-      music.addEventListener("ended", updateMusicButton);
-      music.addEventListener("error", handleMusicUnavailable, { once: true });
-
-      registerFirstInteractionListeners();
-      updateMusicButton();
-
-      window.addEventListener("DOMContentLoaded", startMusic, { once: true });
-    })();
-  </script>
-  <!-- MUSIC-CONTROLS-END -->
-
 </body>
 </html>
